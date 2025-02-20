@@ -1,0 +1,126 @@
+import streamlit as st
+import feedparser
+from transformers import pipeline
+import pandas as pd
+import yfinance as yf
+from datetime import datetime
+
+# Initialize FinBERT Hugging Face pipeline
+pipe = pipeline(task="text-classification", model="ProsusAI/finbert")
+
+# Sidebar inputs
+st.sidebar.header("Input Parameters")
+ticker = st.sidebar.text_input("Stock Ticker", "SQ")
+keyword = st.sidebar.text_input("Company Keyword", "Block")
+
+# Main app
+st.title("Financial News Sentiment Analysis")
+st.subheader(f"Latest News Analysis for {ticker}")
+
+# Fetch stock price data
+try:
+    # Using the provided code structure
+    start = datetime(1997, 1, 1)
+    end = datetime.now()
+    df = yf.download(ticker, start, end)
+    
+    # Calculate percentage changes
+    close_series = pd.Series(df['Close'].values.flatten(), index=df.index, name='Close')
+    index_df = df.index.to_frame(name='Date')
+    stock_data = index_df.join(close_series)
+    
+    # Calculate daily percentage changes
+    stock_data['Daily Return %'] = stock_data['Close'].pct_change() * 100
+    stock_percent_changes = stock_data['Daily Return %'].dropna().round(2).tolist()
+
+except Exception as e:
+    st.error(f"Error fetching stock data: {e}")
+    stock_percent_changes = []
+
+# Fetch RSS feed
+rss_url = f'https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US'
+feed = feedparser.parse(rss_url)
+
+articles = []
+sentiment_scores = []
+total_score = 0
+num_articles = 0
+
+# Process articles
+for entry in feed.entries:
+    if keyword.lower() not in entry.summary.lower():
+        continue
+    
+    # Get sentiment
+    sentiment = pipe(entry.summary)[0]
+    
+    # Calculate scores
+    score = sentiment['score']
+    if sentiment['label'] == 'negative':
+        score *= -1
+    
+    articles.append({
+        'Title': entry.title,
+        'Link': entry.link,
+        'Published': entry.published,
+        'Summary': entry.summary,
+        'Sentiment': sentiment['label'],
+        'Score': score
+    })
+    
+    sentiment_scores.append(score)
+    total_score += score
+    num_articles += 1
+
+# Display results
+if num_articles > 0:
+    # Create DataFrame
+    df = pd.DataFrame(articles)
+    
+    # Display table
+    st.write("### Analyzed Articles")
+    st.dataframe(df[['Published', 'Title', 'Sentiment', 'Score']])
+    
+    # Calculate final score
+    final_score = total_score / num_articles
+    sentiment_label = "Positive" if final_score >= 0.15 else "Negative" if final_score <= -0.15 else "Neutral"
+    
+    # Display overall results
+    st.write("### Overall Sentiment Analysis")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Articles Analyzed", num_articles)
+    with col2:
+        st.metric("Average Sentiment Score", f"{final_score:.2f}")
+    with col3:
+        st.metric("Overall Sentiment", sentiment_label)
+        
+else:
+    st.warning("No articles found matching the keyword filter")
+
+# Display stock and sentiment data
+if stock_percent_changes:
+    st.write("### Recent Stock Performance")
+    st.write(f"Daily percentage changes for {ticker}:")
+    st.write(stock_percent_changes)
+
+if sentiment_scores:
+    st.write("### Individual Article Sentiment Scores")
+    st.write(sentiment_scores)
+
+st.write("---")
+st.write("Note: Sentiment scores range from -1 (most negative) to +1 (most positive)")
+st.write("Stock percentage changes show daily closing price movements")
+
+# Display stock percentage changes
+if stock_percent_changes:
+    st.write("### Historical Daily Percentage Changes")
+    st.write(f"Percentage changes for {ticker} since 1997:")
+    st.write(stock_percent_changes)
+    st.write(f"Total trading days: {len(stock_percent_changes)}")
+    
+    # Optionally show latest 5 days
+    st.write("### Recent 5 Days Percentage Changes")
+    st.write(stock_percent_changes[-5:])
+else:
+    st.warning("No stock data available for this ticker")
