@@ -1,126 +1,291 @@
+#FinBERT Hugging Face Sentiment Analysis
+#Pretrained NLP (Natual Language Processing) analyzes sentiment, built by Prosus AI
+#Need the model than analyzes Financial Data, rather than general
+#Need to use Transformers to feed into Pipeline
+#Will be scraping news data from internet site, or use a News API (free)
+#Feedpasers is only necessary if we want to use an RSS Feed (Really Simple Syndication is a web feed that allows users and applications to receive updates from websites in a standardized, computer-readable format)
+#Requests is needed to send and procees HTTP requests easily
+
+#The stock data only includes trading days, but the news articles can be published on any day, including weekends and holidays. When we reindex the sentiment data to the stock's date range (which skips non-trading days), any news from non-trading days get their dates adjusted to the nearest trading day or dropped, leading to zeros.
+
 import streamlit as st
 import feedparser
 from transformers import pipeline
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
+import matplotlib.pyplot as plt
+from dateutil import parser
+import pytz
+from pandas.tseries.offsets import BDay  # For business day calculations
 
-# Initialize FinBERT Hugging Face pipeline
+# Initialize Hugging Face FinBERT pipeline
 pipe = pipeline(task="text-classification", model="ProsusAI/finbert")
 
-# Sidebar inputs
+# Streamlit layout
 st.sidebar.header("Input Parameters")
 ticker = st.sidebar.text_input("Stock Ticker", "SQ")
 keyword = st.sidebar.text_input("Company Keyword", "Block")
 
-# Main app
-st.title("Financial News Sentiment Analysis")
-st.subheader(f"Latest News Analysis for {ticker}")
+# Debugging switch
+debug_mode = st.sidebar.checkbox("Show Debugging Info")
 
-# Fetch stock price data
+st.title("Comprehensive Financial Analysis")
+st.subheader(f"Analysis Report for {ticker}")
+
+# Stock Data Analysis Section
 try:
-    # Using the provided code structure
-    start = datetime(1997, 1, 1)
-    end = datetime.now()
-    df = yf.download(ticker, start, end)
+    st.write("## Complete Stock Data Analysis")
     
-    # Calculate percentage changes
-    close_series = pd.Series(df['Close'].values.flatten(), index=df.index, name='Close')
-    index_df = df.index.to_frame(name='Date')
-    stock_data = index_df.join(close_series)
+    # Get historical data with 5 years history by default
+    df = yf.download(ticker, period="5y")
     
-    # Calculate daily percentage changes
-    stock_data['Daily Return %'] = stock_data['Close'].pct_change() * 100
-    stock_percent_changes = stock_data['Daily Return %'].dropna().round(2).tolist()
+    if not df.empty:
+        # --- Add This Critical Line ---
+        df['Daily Return %'] = df['Close'].pct_change() * 100
+        
+        # Create trading date reference
+        trading_dates = df.index.normalize().unique()
+        
+        # --- Sentiment Processing with Trading Date Alignment ---
+        sentiment_data = []
+        rss_url = f'https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US'
+        feed = feedparser.parse(rss_url)
+        
+        if feed.entries:
+            if debug_mode:
+                st.sidebar.subheader("Raw Feed Debug")
+                st.sidebar.write(f"Total articles: {len(feed.entries)}")
+                st.sidebar.write("First article:", feed.entries[0])
+
+            for entry in feed.entries:
+                try:
+                    # Check keyword match
+                    if keyword.lower() not in entry.summary.lower():
+                        continue
+
+                    # Parse and normalize date
+                    pub_date = entry.get('published')
+                    if not pub_date:
+                        continue
+                        
+                    parsed_date = parser.parse(pub_date)
+                    parsed_date = parsed_date.astimezone(pytz.UTC).replace(tzinfo=None)
+                    article_date = parsed_date.date()
+
+                    # Find next trading day
+                    next_trading_day = pd.to_datetime(article_date) + BDay(0)
+                    if next_trading_day not in trading_dates:
+                        continue  # Skip if no matching trading day
+
+                    # Get sentiment
+                    sentiment = pipe(entry.summary)[0]
+                    score = sentiment['score']
+                    if sentiment['label'] == 'negative':
+                        score *= -1
+
+                    sentiment_data.append({
+                        'Date': next_trading_day,
+                        'Score': score,
+                        'Title': entry.title
+                    })
+
+                except Exception as e:
+                    if debug_mode:
+                        st.sidebar.error(f"Article error: {str(e)}")
+
+        # Create and merge sentiment data
+        if sentiment_data:
+            sentiment_df = pd.DataFrame(sentiment_data)
+            sentiment_df = sentiment_df.groupby('Date')['Score'].mean().to_frame()
+            
+            # Merge with all trading dates
+            sentiment_full = pd.DataFrame(index=trading_dates)
+            sentiment_full = sentiment_full.join(sentiment_df).fillna(0)
+            
+            if debug_mode:
+                st.sidebar.subheader("Sentiment Debug")
+                st.sidebar.write("Raw sentiment data:", sentiment_data[:3])
+                st.sidebar.write("Processed sentiment:", sentiment_df.head())
+        else:
+            sentiment_full = pd.DataFrame(index=trading_dates, data={'Score': 0.0})
+
+        # --- Display Sentiment Scores ---
+        st.write("### Historical Sentiment Scores")
+        st.dataframe(
+            sentiment_full.style.format({'Score': '{:.2f}'}),
+            height=300,
+            use_container_width=True
+        )
+
+        # Price moving averages
+        df['Close_MA_20'] = df['Close'].rolling(window=20).mean()
+        df['Close_MA_50'] = df['Close'].rolling(window=50).mean()
+        df['Close_MA_100'] = df['Close'].rolling(window=100).mean()
+        
+        # Return moving averages (now works since Daily Return % exists)
+        df['Return_MA_20'] = df['Daily Return %'].rolling(window=20).mean()
+        df['Return_MA_50'] = df['Daily Return %'].rolling(window=50).mean()
+        df['Return_MA_100'] = df['Daily Return %'].rolling(window=100).mean()
+
+        # Display stock analysis
+        st.success("✅ Successfully retrieved historical stock data")
+
+        # Format numeric columns
+        format_dict = {
+            'Open': '${:.2f}',
+            'High': '${:.2f}',
+            'Low': '${:.2f}',
+            'Close': '${:.2f}',
+            'Adj Close': '${:.2f}',
+            'Close_MA_20': '${:.2f}',
+            'Close_MA_50': '${:.2f}',
+            'Close_MA_100': '${:.2f}',
+            'Volume': '{:,}',
+            'Daily Return %': '{:.2f}%',
+            'Return_MA_20': '{:.2f}%',
+            'Return_MA_50': '{:.2f}%',
+            'Return_MA_100': '{:.2f}%'
+        }
+        
+        # Display full stock data table
+        st.write("### Complete Historical Data")
+        st.dataframe(
+            df.style.format(format_dict, na_rep="-"),
+            height=600,
+            use_container_width=True
+        )
+
+        # Plot section after table
+        st.write("## Technical Analysis")
+        
+        # Price MA Plot
+        st.write("### Price Moving Averages")
+        fig1, ax1 = plt.subplots(figsize=(12, 6))
+        ax1.plot(df.index, df['Close'], label='Closing Price', alpha=0.5)
+        ax1.plot(df.index, df['Close_MA_20'], label='20-Day MA', linewidth=1.5)
+        ax1.plot(df.index, df['Close_MA_50'], label='50-Day MA', linewidth=1.5)
+        ax1.plot(df.index, df['Close_MA_100'], label='100-Day MA', linewidth=1.5)
+        ax1.set_title(f'{ticker} Price Movement with Moving Averages')
+        ax1.set_ylabel('Price (USD)')
+        ax1.legend()
+        ax1.grid(True)
+        st.pyplot(fig1)
+
+        # Return MA Plot
+        st.write("### Daily Return Moving Averages")
+        fig2, ax2 = plt.subplots(figsize=(12, 6))
+        ax2.plot(df.index, df['Daily Return %'], label='Daily Returns', alpha=0.3)
+        ax2.plot(df.index, df['Return_MA_20'], label='20-Day MA', linewidth=1.5)
+        ax2.plot(df.index, df['Return_MA_50'], label='50-Day MA', linewidth=1.5)
+        ax2.plot(df.index, df['Return_MA_100'], label='100-Day MA', linewidth=1.5)
+        ax2.set_title(f'{ticker} Daily Returns with Moving Averages')
+        ax2.set_ylabel('Percentage Change')
+        ax2.legend()
+        ax2.grid(True)
+        st.pyplot(fig2)
+        
+    else:
+        st.error("No stock data available for this ticker")
 
 except Exception as e:
-    st.error(f"Error fetching stock data: {e}")
-    stock_percent_changes = []
+    st.error(f"Stock data error: {str(e)}")
 
-# Fetch RSS feed
-rss_url = f'https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US'
-feed = feedparser.parse(rss_url)
-
-articles = []
-sentiment_scores = []
-total_score = 0
-num_articles = 0
-
-# Process articles
-for entry in feed.entries:
-    if keyword.lower() not in entry.summary.lower():
-        continue
+# News Sentiment Analysis Section
+try:
+    st.write("## Complete News Sentiment Analysis")
     
-    # Get sentiment
-    sentiment = pipe(entry.summary)[0]
+    # Fetch and parse RSS feed
+    rss_url = f'https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US'
+    feed = feedparser.parse(rss_url)
     
-    # Calculate scores
-    score = sentiment['score']
-    if sentiment['label'] == 'negative':
-        score *= -1
-    
-    articles.append({
-        'Title': entry.title,
-        'Link': entry.link,
-        'Published': entry.published,
-        'Summary': entry.summary,
-        'Sentiment': sentiment['label'],
-        'Score': score
-    })
-    
-    sentiment_scores.append(score)
-    total_score += score
-    num_articles += 1
-
-# Display results
-if num_articles > 0:
-    # Create DataFrame
-    df = pd.DataFrame(articles)
-    
-    # Display table
-    st.write("### Analyzed Articles")
-    st.dataframe(df[['Published', 'Title', 'Sentiment', 'Score']])
-    
-    # Calculate final score
-    final_score = total_score / num_articles
-    sentiment_label = "Positive" if final_score >= 0.15 else "Negative" if final_score <= -0.15 else "Neutral"
-    
-    # Display overall results
-    st.write("### Overall Sentiment Analysis")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Articles Analyzed", num_articles)
-    with col2:
-        st.metric("Average Sentiment Score", f"{final_score:.2f}")
-    with col3:
-        st.metric("Overall Sentiment", sentiment_label)
+    if not feed.entries:
+        st.warning("No articles found in RSS feed")
+    else:
+        articles = []
+        sentiment_scores = []
         
-else:
-    st.warning("No articles found matching the keyword filter")
+        # Process all articles
+        for entry in feed.entries:
+            if keyword.lower() in entry.summary.lower():
+                try:
+                    # Full text processing without truncation
+                    sentiment = pipe(entry.summary)[0]
+                    score = sentiment['score'] * (-1 if sentiment['label'] == 'negative' else 1)
+                    
+                    articles.append({
+                        'Date': entry.get('published', 'N/A'),
+                        'Title': entry.title,
+                        'Sentiment': sentiment['label'],
+                        'Score': score,
+                        'Link': entry.link,
+                        'Full Text': entry.summary
+                    })
+                    sentiment_scores.append(score)
+                except Exception as e:
+                    st.error(f"Error processing article: {str(e)}")
+        
+        if articles:
+            # Display results
+            st.write(f"### All Analyzed Articles ({len(articles)} total)")
+            
+            # Create expandable sections for each article
+            for idx, article in enumerate(articles, 1):
+                with st.expander(f"Article {idx}: {article['Title']}"):
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        st.write(f"**Date:** {article['Date']}")
+                        st.write(f"**Sentiment:** {article['Sentiment']}")
+                        st.write(f"**Score:** {article['Score']:.2f}")
+                        st.write(f"[Read Full Article]({article['Link']})")
+                    with col2:
+                        st.write("**Summary:**")
+                        st.write(article['Full Text'])
+            
+            # Display sentiment metrics
+            st.write("### Aggregate Sentiment Analysis")
+            avg_score = sum(sentiment_scores)/len(sentiment_scores) if sentiment_scores else 0.0
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Articles Analyzed", len(articles))
+            col2.metric("Average Sentiment Score", f"{avg_score:.2f}")
+            col3.metric("Positive/Negative Ratio", 
+                        f"{len([s for s in sentiment_scores if s > 0])}:{len([s for s in sentiment_scores if s < 0])}")
+            
+        else:
+            st.warning("No articles matched the keyword filter")
 
-# Display stock and sentiment data
-if stock_percent_changes:
-    st.write("### Recent Stock Performance")
-    st.write(f"Daily percentage changes for {ticker}:")
-    st.write(stock_percent_changes)
+except Exception as e:
+    st.error(f"News analysis error: {str(e)}")
 
-if sentiment_scores:
-    st.write("### Individual Article Sentiment Scores")
-    st.write(sentiment_scores)
-
+# Final notes
 st.write("---")
-st.write("Note: Sentiment scores range from -1 (most negative) to +1 (most positive)")
-st.write("Stock percentage changes show daily closing price movements")
+st.write("""
+**Methodology Notes:**
+- Stock data sourced directly from Yahoo Finance historical records
+- Daily returns calculated using closing prices
+- Price MAs calculated on closing prices
+- Return MAs calculated on daily percentage changes
+- 20, 50, 100-Day MA: Short, Medium, Long-term trend indicators
+- All MAs calculated using simple moving average (SMA)
+- News sentiment analysis performed on full article text without truncation
+- Sentiment scores range from -1 (negative) to +1 (positive)
+- Missing sentiment values filled with 0 (neutral)
+- Tables show complete historical alignment from first trading day
+""")
 
-# Display stock percentage changes
-if stock_percent_changes:
-    st.write("### Historical Daily Percentage Changes")
-    st.write(f"Percentage changes for {ticker} since 1997:")
-    st.write(stock_percent_changes)
-    st.write(f"Total trading days: {len(stock_percent_changes)}")
-    
-    # Optionally show latest 5 days
-    st.write("### Recent 5 Days Percentage Changes")
-    st.write(stock_percent_changes[-5:])
-else:
-    st.warning("No stock data available for this ticker")
+# Final notes
+st.write("---")
+st.write("""
+**Methodology Notes:**
+- Stock data sourced directly from Yahoo Finance historical records
+- Daily returns calculated using closing prices
+- Price MAs calculated on closing prices
+- Return MAs calculated on daily percentage changes
+- 20, 50, 100-Day MA: Short, Medium, Long-term trend indicators
+- All MAs calculated using simple moving average (SMA)
+- News sentiment analysis performed on full article text without truncation
+- Sentiment scores range from -1 (negative) to +1 (positive)
+- Missing sentiment values filled with 0 (neutral)
+- Tables show complete historical alignment from first trading day
+""")
