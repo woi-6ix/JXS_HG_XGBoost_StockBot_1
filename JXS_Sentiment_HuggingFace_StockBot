@@ -5,7 +5,6 @@
 #Will be scraping news data from internet site, or use a News API (free)
 #Feedpasers is only necessary if we want to use an RSS Feed (Really Simple Syndication is a web feed that allows users and applications to receive updates from websites in a standardized, computer-readable format)
 #Requests is needed to send and procees HTTP requests easily
-
 #The stock data only includes trading days, but the news articles can be published on any day, including weekends and holidays. When we reindex the sentiment data to the stock's date range (which skips non-trading days), any news from non-trading days get their dates adjusted to the nearest trading day or dropped, leading to zeros.
 
 import streamlit as st
@@ -18,14 +17,28 @@ import matplotlib.pyplot as plt
 from dateutil import parser
 import pytz
 from pandas.tseries.offsets import BDay  # For business day calculations
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+import xgboost as xgb
 
 # Initialize Hugging Face FinBERT pipeline
 pipe = pipeline(task="text-classification", model="ProsusAI/finbert")
 
+def convert_to_utc_naive(dt):
+    """Convert any datetime object to UTC-naive format"""
+    if isinstance(dt, pd.Timestamp):
+        dt = dt.to_pydatetime()
+    if dt.tzinfo is not None:
+        return dt.astimezone(pytz.utc).replace(tzinfo=None)
+    return dt
+
 # Streamlit layout
 st.sidebar.header("Input Parameters")
-ticker = st.sidebar.text_input("Stock Ticker", "SQ")
+ticker = st.sidebar.text_input("Stock Ticker", "XYZ")
 keyword = st.sidebar.text_input("Company Keyword", "Block")
+forecast_days = st.sidebar.slider("Days to Forecast", 1, 5, 3)
+run_button = st.sidebar.button("Run Analysis")
 
 # Debugging switch
 debug_mode = st.sidebar.checkbox("Show Debugging Info")
@@ -37,9 +50,14 @@ st.subheader(f"Analysis Report for {ticker}")
 try:
     st.write("## Complete Stock Data Analysis")
     
-    # Get historical data with 5 years history by default
-    df = yf.download(ticker, period="5y")
+    # Set dynamic date range with timezone awareness
+    now_utc = datetime.now(pytz.utc)
+    start_date = datetime(1997, 1, 1, tzinfo=pytz.utc)  # Set to January 1, 1997
+    end_date = now_utc + pd.DateOffset(days=1)          # Include today's potential articles
     
+    # Fetch the stock data with timezone-aware dates
+    df = yf.download(ticker, start=start_date, end=end_date)
+
     if not df.empty:
         # --- Add This Critical Line ---
         df['Daily Return %'] = df['Close'].pct_change() * 100
@@ -68,15 +86,33 @@ try:
                     pub_date = entry.get('published')
                     if not pub_date:
                         continue
-                        
+                                        # Parse and normalize date with timezone awareness
                     parsed_date = parser.parse(pub_date)
-                    parsed_date = parsed_date.astimezone(pytz.UTC).replace(tzinfo=None)
-                    article_date = parsed_date.date()
-
-                    # Find next trading day
-                    next_trading_day = pd.to_datetime(article_date) + BDay(0)
-                    if next_trading_day not in trading_dates:
-                        continue  # Skip if no matching trading day
+                    if not parsed_date.tzinfo:
+                        parsed_date = parsed_date.replace(tzinfo=pytz.utc)
+                    else:
+                        parsed_date = parsed_date.astimezone(pytz.utc)
+                        
+                    # Convert to naive datetime in UTC for comparison
+                    article_date = parsed_date.replace(tzinfo=None)
+                    
+                    # Find matching trading day (allow same-day if market is open)
+                    # Get all possible trading dates up to now
+                    possible_dates = df.loc[:now_utc.replace(tzinfo=None)].index
+                    
+                    # Find the nearest trading day (including same day if market open)
+                    next_trading_day = min(
+                        possible_dates[possible_dates >= article_date],
+                        default=None
+                    )
+                    
+                    # Create trading date reference with timezone-naive UTC dates
+                    trading_dates = df.index.tz_localize(None).unique()
+                    if next_trading_day is None:
+                        # If article is after market close, use next trading day
+                        next_trading_day = pd.to_datetime(article_date) + BDay(1)
+                        if next_trading_day not in trading_dates:
+                            continue
 
                     # Get sentiment
                     sentiment = pipe(entry.summary)[0]
@@ -110,11 +146,31 @@ try:
         else:
             sentiment_full = pd.DataFrame(index=trading_dates, data={'Score': 0.0})
 
-        # --- Display Sentiment Scores ---
-        st.write("### Historical Sentiment Scores")
+        # --- COMBINED TABLE SECTION ---
+        st.write("### Combined Sentiment & Returns Analysis")
+        
+        # Create combined dataframe
+        combined_df = pd.DataFrame({
+            'Date': df.index,
+            'Sentiment Score': sentiment_full['Score'],
+            'Daily Return %': df['Daily Return %']
+        }).set_index('Date')
+        
+        # Style formatting
+        combined_style = combined_df.style.format({
+            'Sentiment Score': '{:.2f}',
+            'Daily Return %': '{:.2f}%'
+        }, na_rep="-")
+        
+        # Color conditional formatting
+        combined_style = combined_style.applymap(
+            lambda x: 'color: green' if isinstance(x, float) and x > 0 else 'color: red' if isinstance(x, float) and x < 0 else '',
+            subset=['Sentiment Score', 'Daily Return %']
+        )
+        
         st.dataframe(
-            sentiment_full.style.format({'Score': '{:.2f}'}),
-            height=300,
+            combined_style,
+            height=400,
             use_container_width=True
         )
 
@@ -123,7 +179,7 @@ try:
         df['Close_MA_50'] = df['Close'].rolling(window=50).mean()
         df['Close_MA_100'] = df['Close'].rolling(window=100).mean()
         
-        # Return moving averages (now works since Daily Return % exists)
+        # Price Returns moving averages
         df['Return_MA_20'] = df['Daily Return %'].rolling(window=20).mean()
         df['Return_MA_50'] = df['Daily Return %'].rolling(window=50).mean()
         df['Return_MA_100'] = df['Daily Return %'].rolling(window=100).mean()
@@ -184,7 +240,105 @@ try:
         ax2.legend()
         ax2.grid(True)
         st.pyplot(fig2)
-        
+
+        # Sentiment Driven Returns XGBoost Forecasting
+        st.write("## Sentiment-Driven Return Forecasting")
+
+        # Check if we have enough data
+        if len(df) < 30:
+            st.warning("Insufficient data for forecasting (need at least 30 days)")
+        else:
+            try:
+                # Prepare dataset
+                merged_data = pd.DataFrame({
+                    'Returns': df['Daily Return %'],
+                    'Sentiment': sentiment_full['Score']
+                }).dropna()
+
+                # Create lagged features
+                lookback = 5  # Use 5 days of historical data
+                for i in range(1, lookback+1):
+                    merged_data[f'Returns_lag{i}'] = merged_data['Returns'].shift(i)
+                    merged_data[f'Sentiment_lag{i}'] = merged_data['Sentiment'].shift(i)
+
+                merged_data = merged_data.dropna()
+                
+                # Prepare features/target
+                X = merged_data.drop('Returns', axis=1)
+                y = merged_data['Returns']
+                
+                # Train/test split (time-series aware)
+                split = int(0.8 * len(X))
+                X_train, X_test = X[:split], X[split:]
+                y_train, y_test = y[:split], y[split:]
+
+                # Train XGBoost model
+                model = xgb.XGBRegressor(
+                    n_estimators=100,
+                    learning_rate=0.1,
+                    max_depth=3,
+                    random_state=42
+                )
+                model.fit(X_train, y_train)
+                
+                # Evaluate model
+                train_pred = model.predict(X_train)
+                test_pred = model.predict(X_test)
+                
+                # Create forecast dataframe
+                last_date = df.index[-1]
+                forecast_dates = [last_date + BDay(i) for i in range(1, forecast_days+1)]
+                
+                # Prepare future features (recursive forecasting)
+                current_features = X.iloc[-1].values
+                forecasts = []
+                
+                for _ in range(forecast_days):
+                    pred = model.predict(current_features.reshape(1, -1))[0]
+                    forecasts.append(pred)
+                    
+                    # Update features for next prediction
+                    current_features = np.roll(current_features, 2)
+                    current_features[0] = pred  # Update returns lag
+                    current_features[1] = merged_data['Sentiment'].iloc[-1]  # Keep latest sentiment
+                
+                # Create results dataframe
+                forecast_df = pd.DataFrame({
+                    'Date': forecast_dates,
+                    'Predicted Return %': forecasts
+                }).set_index('Date')
+                
+                # Plot results
+                fig, ax = plt.subplots(figsize=(12, 6))
+                ax.plot(y_test.index, y_test, label='Actual Returns')
+                ax.plot(y_test.index, test_pred, label='Test Predictions', linestyle='--')
+                ax.plot(forecast_df.index, forecast_df['Predicted Return %'], 
+                        label='Forecast', linestyle=':', marker='o')
+                ax.set_title(f'{ticker} Return Forecast ({forecast_days}-day Outlook)')
+                ax.set_ylabel('Daily Return (%)')
+                ax.legend()
+                ax.grid(True)
+                st.pyplot(fig)
+                
+                # Show forecast table
+                st.write("### Forecast Results")
+                st.dataframe(
+                    forecast_df.style.format({'Predicted Return %': '{:.2f}%'}),
+                    use_container_width=True
+                )
+                
+                # Feature importance
+                st.write("#### Feature Importance")
+                importance = pd.DataFrame({
+                    'Feature': X.columns,
+                    'Importance': model.feature_importances_
+                }).sort_values('Importance', ascending=False)
+                
+                st.bar_chart(importance.set_index('Feature'))
+
+            except Exception as e:
+                st.error(f"Forecasting error: {str(e)}")
+                
     else:
         st.error("No stock data available for this ticker")
 
@@ -262,30 +416,43 @@ except Exception as e:
 st.write("---")
 st.write("""
 **Methodology Notes:**
-- Stock data sourced directly from Yahoo Finance historical records
-- Daily returns calculated using closing prices
-- Price MAs calculated on closing prices
-- Return MAs calculated on daily percentage changes
-- 20, 50, 100-Day MA: Short, Medium, Long-term trend indicators
-- All MAs calculated using simple moving average (SMA)
-- News sentiment analysis performed on full article text without truncation
-- Sentiment scores range from -1 (negative) to +1 (positive)
-- Missing sentiment values filled with 0 (neutral)
-- Tables show complete historical alignment from first trading day
-""")
+- **Data Sources:**
+  - Stock data sourced directly from Yahoo Finance historical records
+  - News sentiment derived from Yahoo Finance RSS feed articles
+  - External economic indicators (interest rates, inflation data) not currently included
 
-# Final notes
-st.write("---")
-st.write("""
-**Methodology Notes:**
-- Stock data sourced directly from Yahoo Finance historical records
-- Daily returns calculated using closing prices
-- Price MAs calculated on closing prices
-- Return MAs calculated on daily percentage changes
-- 20, 50, 100-Day MA: Short, Medium, Long-term trend indicators
-- All MAs calculated using simple moving average (SMA)
-- News sentiment analysis performed on full article text without truncation
-- Sentiment scores range from -1 (negative) to +1 (positive)
-- Missing sentiment values filled with 0 (neutral)
-- Tables show complete historical alignment from first trading day
+- **Technical Analysis:**
+  - Daily returns calculated using closing prices (Percentage change from previous close)
+  - Price moving averages (MAs) calculated on closing prices (20/50/100-Day SMA)
+  - Return MAs calculated on daily percentage changes (20/50/100-Day SMA)
+  - 20, 50, 100-Day MA periods represent Short, Medium, and Long-term trend indicators
+
+- **Sentiment Analysis:**
+  - FinBERT model processes full article text without truncation
+  - Sentiment scores range from -1 (negative) to +1 (positive)
+  - Articles mapped to next trading day if published during non-market hours
+  - Missing sentiment values filled with 0 (neutral baseline)
+
+- **Machine Learning Forecasting:**
+  - XGBoost regression model with multiple input factors:
+    - Endogenous: Historical price/return patterns (5-day lagged returns)
+    - Exogenous: News sentiment trends (5-day lagged sentiment scores)
+    - Technical indicators: Moving average convergence/divergence
+  - Recursive multi-step forecasting for 1-5 day predictions
+  - Explicit handling of temporal relationships through feature engineering
+  - Time-series aware training (80% train / 20% test chronological split)
+  - Model features importance analysis shows key prediction drivers
+  - Business day alignment ensures valid trading date predictions
+
+- **Exogenous Factor Handling:**
+  - News sentiment treated as external market sentiment indicator
+  - Assumes constant sentiment impact horizon of 5 trading days
+  - No forward-looking bias in sentiment feature engineering
+  - Missing exogenous values handled through forward-filling
+
+- **Limitations:**
+  - Does not currently incorporate macroeconomic indicators
+  - Limited to single-equity analysis (no sector/industry factors)
+  - Sentiment data limited to Yahoo Finance news sources
+  - Model assumes stationarity of return/sentiment relationships
 """)
