@@ -412,3 +412,47 @@ try:
 except Exception as e:
     st.error(f"News analysis error: {str(e)}")
 
+# Final notes
+st.write("---")
+st.write("""
+**Methodology Notes:**
+- **Data Sources:**
+  - Stock data sourced directly from Yahoo Finance historical records
+  - News sentiment derived from Yahoo Finance RSS feed articles
+  - External economic indicators (interest rates, inflation data) not currently included
+
+- **Technical Analysis:**
+  - Daily returns calculated using closing prices (Percentage change from previous close)
+  - Price moving averages (MAs) calculated on closing prices (20/50/100-Day SMA)
+  - Return MAs calculated on daily percentage changes (20/50/100-Day SMA)
+  - 20, 50, 100-Day MA periods represent Short, Medium, and Long-term trend indicators
+
+- **Sentiment Analysis:**
+  - FinBERT model processes full article text without truncation
+  - Sentiment scores range from -1 (negative) to +1 (positive)
+  - Articles mapped to next trading day if published during non-market hours
+  - Missing sentiment values filled with 0 (neutral baseline)
+
+- **Machine Learning Forecasting:**
+  - XGBoost regression model with multiple input factors:
+    - Endogenous: Historical price/return patterns (5-day lagged returns)
+    - Exogenous: News sentiment trends (5-day lagged sentiment scores)
+    - Technical indicators: Moving average convergence/divergence
+  - Recursive multi-step forecasting for 1-5 day predictions
+  - Explicit handling of temporal relationships through feature engineering
+  - Time-series aware training (80% train / 20% test chronological split)
+  - Model features importance analysis shows key prediction drivers
+  - Business day alignment ensures valid trading date predictions
+
+- **Exogenous Factor Handling:**
+  - News sentiment treated as external market sentiment indicator
+  - Assumes constant sentiment impact horizon of 5 trading days
+  - No forward-looking bias in sentiment feature engineering
+  - Missing exogenous values handled through forward-filling
+
+- **Limitations:**
+  - Does not currently incorporate macroeconomic indicators
+  - Limited to single-equity analysis (no sector/industry factors)
+  - Sentiment data limited to Yahoo Finance news sources
+  - Model assumes stationarity of return/sentiment relationships
+""")
