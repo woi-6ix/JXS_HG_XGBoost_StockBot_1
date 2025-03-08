@@ -460,3 +460,4 @@ st.write("""
   - Sentiment data limited to Yahoo Finance news sources
   - Model assumes stationarity of return/sentiment relationships
 """)
+
