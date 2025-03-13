@@ -96,7 +96,7 @@ try:
     df = yf.download(ticker, start=start_date, end=end_date)
 
     if not df.empty:
-        # --- Add This Critical Line ---
+
         df['Daily Return %'] = df['Close'].pct_change() * 100
         
         # Create trading date reference
@@ -184,32 +184,35 @@ try:
             sentiment_full = pd.DataFrame(index=trading_dates, data={'Score': 0.0})
 
         # --- COMBINED TABLE SECTION ---
-        st.write("### Combined Sentiment & Returns Analysis")
-        
-        # Create combined dataframe
-        combined_df = pd.DataFrame({
-            'Date': df.index,
-            'Sentiment Score': sentiment_full['Score'],
-            'Daily Return %': df['Daily Return %']
-        }).set_index('Date')
-        
-        # Style formatting
-        combined_style = combined_df.style.format({
-            'Sentiment Score': '{:.2f}',
-            'Daily Return %': '{:.2f}%'
-        }, na_rep="-")
-        
-        # Color conditional formatting
-        combined_style = combined_style.applymap(
-            lambda x: 'color: green' if isinstance(x, float) and x > 0 else 'color: red' if isinstance(x, float) and x < 0 else '',
-            subset=['Sentiment Score', 'Daily Return %']
-        )
-        
-        st.dataframe(
-            combined_style,
-            height=400,
-            use_container_width=True
-        )
+
+        st.success("✅ Successfully retrieved historical stock data")
+
+        with st.expander("Combined Sentiment & Returns Analysis", expanded=False):
+            st.write("### Combined Sentiment & Returns Analysis")
+            # Create combined dataframe
+            combined_df = pd.DataFrame({
+                'Date': df.index,
+                'Sentiment Score': sentiment_full['Score'],
+                'Daily Return %': df['Daily Return %']
+            }).set_index('Date')
+            
+            # Style formatting
+            combined_style = combined_df.style.format({
+                'Sentiment Score': '{:.2f}',
+                'Daily Return %': '{:.2f}%'
+            }, na_rep="-")
+            
+            # Color conditional formatting
+            combined_style = combined_style.applymap(
+                lambda x: 'color: green' if isinstance(x, float) and x > 0 else 'color: red' if isinstance(x, float) and x < 0 else '',
+                subset=['Sentiment Score', 'Daily Return %']
+            )
+            
+            st.dataframe(
+                combined_style,
+                height=400,
+                use_container_width=True
+            )
 
         # Price moving averages
         df['Close_MA_20'] = df['Close'].rolling(window=20).mean()
@@ -220,9 +223,6 @@ try:
         df['Return_MA_20'] = df['Daily Return %'].rolling(window=20).mean()
         df['Return_MA_50'] = df['Daily Return %'].rolling(window=50).mean()
         df['Return_MA_100'] = df['Daily Return %'].rolling(window=100).mean()
-
-        # Display stock analysis
-        st.success("✅ Successfully retrieved historical stock data")
 
         # Format numeric columns
         format_dict = {
@@ -241,13 +241,14 @@ try:
             'Return_MA_100': '{:.2f}%'
         }
         
-        # Display full stock data table
-        st.write("### Complete Historical Data")
-        st.dataframe(
-            df.style.format(format_dict, na_rep="-"),
-            height=600,
-            use_container_width=True
-        )
+        # --- HISTORICAL DATA SECTION ---
+        with st.expander("Complete Historical Data", expanded=False):
+            st.write("### Complete Historical Data")
+            st.dataframe(
+                df.style.format(format_dict, na_rep="-"),
+                height=600,
+                use_container_width=True
+            )
 
         # Plot section after table
         st.write("## Technical Analysis")
@@ -461,51 +462,52 @@ try:
 except Exception as e:
     st.error(f"News analysis error: {str(e)}")
 
-# Final notes
-st.write("---")
-st.write("""
-**Methodology Notes:**
-- **Data Sources:**
-  - Stock data sourced directly from Yahoo Finance historical records
-  - News sentiment derived from Yahoo Finance RSS feed articles
-  - External economic indicators (interest rates, inflation data) not currently included
+# --- METHODOLOGY SECTION ---
+with st.expander("Methodology Notes", expanded=False):
+    st.write("---")
+    st.write("""
+    **Methodology Notes:**
+    - **Data Sources:**
+        - Stock data sourced directly from Yahoo Finance historical records
+        - News sentiment derived from Yahoo Finance RSS feed articles
+        - External economic indicators (interest rates, inflation data) not currently included
 
-- **Technical Analysis:**
-  - Daily returns calculated using closing prices (Percentage change from previous close)
-  - Price moving averages (MAs) calculated on closing prices (20/50/100-Day SMA)
-  - Return MAs calculated on daily percentage changes (20/50/100-Day SMA)
-  - 20, 50, 100-Day MA periods represent Short, Medium, and Long-term trend indicators
+    - **Technical Analysis:**
+        - Daily returns calculated using closing prices (Percentage change from previous close)
+        - Price moving averages (MAs) calculated on closing prices (20/50/100-Day SMA)
+        - Return MAs calculated on daily percentage changes (20/50/100-Day SMA)
+        - 20, 50, 100-Day MA periods represent Short, Medium, and Long-term trend indicators
 
-- **Sentiment Analysis:**
-  - FinBERT model processes full article text without truncation
-  - Sentiment scores range from -1 (negative) to +1 (positive)
-  - Articles mapped to next trading day if published during non-market hours
-  - Missing sentiment values filled with 0 (neutral baseline)
+    - **Sentiment Analysis:**
+        - FinBERT model processes full article text without truncation
+        - Sentiment scores range from -1 (negative) to +1 (positive)
+        - Articles mapped to next trading day if published during non-market hours
+        - Missing sentiment values filled with 0 (neutral baseline)
 
-- **Machine Learning Forecasting:**
-  - XGBoost regression model with multiple input factors and enhanced long-term capabilities:
-    - Endogenous: Historical price/return patterns (30-day lagged returns)
-    - Exogenous: News sentiment trends (30-day lagged sentiment scores)
-    - Technical indicators: Moving average convergence/divergence
-    - Exponential error decay for multi-step forecasts
-    - Confidence interval estimates (85-115% of predicted values)
-    - Feature engineering optimized for 50-day predictions
-  - Recursive multi-step forecasting for 1-50 day predictions with stability enhancements
-  - Volatility-adjusted predictions
-  - Explicit handling of temporal relationships through feature engineering
-  - Time-series aware training (80% train / 20% test chronological split)
-  - Model features importance analysis shows key prediction drivers
-  - Business day alignment ensures valid trading date predictions
+    - **Machine Learning Forecasting:**
+        - XGBoost regression model with multiple input factors and enhanced long-term capabilities:
+            - Endogenous: Historical price/return patterns (30-day lagged returns)
+            - Exogenous: News sentiment trends (30-day lagged sentiment scores)
+            - Technical indicators: Moving average convergence/divergence
+            - Exponential error decay for multi-step forecasts
+            - Confidence interval estimates (85-115% of predicted values)
+            - Feature engineering optimized for 50-day predictions
+        - Recursive multi-step forecasting for 1-50 day predictions with stability enhancements
+        - Volatility-adjusted predictions
+        - Explicit handling of temporal relationships through feature engineering
+        - Time-series aware training (80% train / 20% test chronological split)
+        - Model features importance analysis shows key prediction drivers
+        - Business day alignment ensures valid trading date predictions
 
-- **Exogenous Factor Handling:**
-  - News sentiment treated as external market sentiment indicator
-  - Assumes constant sentiment impact horizon of 5 trading days
-  - No forward-looking bias in sentiment feature engineering
-  - Missing exogenous values handled through forward-filling
+    - **Exogenous Factor Handling:**
+        - News sentiment treated as external market sentiment indicator
+        - Assumes constant sentiment impact horizon of 5 trading days
+        - No forward-looking bias in sentiment feature engineering
+        - Missing exogenous values handled through forward-filling
 
-- **Limitations:**
-  - Does not currently incorporate macroeconomic indicators
-  - Limited to single-equity analysis (no sector/industry factors)
-  - Sentiment data limited to Yahoo Finance news sources
-  - Model assumes stationarity of return/sentiment relationships
-""")
+    - **Limitations:**
+        - Does not currently incorporate macroeconomic indicators
+        - Limited to single-equity analysis (no sector/industry factors)
+        - Sentiment data limited to Yahoo Finance news sources
+        - Model assumes stationarity of return/sentiment relationships
+    """)
