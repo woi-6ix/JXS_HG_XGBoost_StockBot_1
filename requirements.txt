@@ -41,7 +41,7 @@ ml-dtypes==0.4.1
 multitasking==0.0.11
 namex==0.0.8
 narwhals==1.22.0
-numpy==2.0.2
+numpy>=1.26.0
 opt_einsum==3.4.0
 optree==0.14.0
 packaging==24.2
@@ -63,8 +63,8 @@ requests==2.32.3
 rich==13.9.4
 rpds-py==0.22.3
 safetensors==0.5.3
-scikit-learn==1.6.1
-scipy==1.15.2
+scikit-learn>=1.5.0
+scipy>=1.13.0
 sgmllib3k==1.0.0
 six==1.17.0
 smmap==5.0.2
@@ -73,7 +73,7 @@ streamlit==1.41.1
 tenacity==9.0.0
 tensorboard==2.18.0
 tensorboard-data-server==0.7.2
-tensorflow==2.18.0
+tensorflow>=2.18.0
 tensorflow-io-gcs-filesystem>=0.37.1
 tensorflow_intel==2.18.0
 termcolor==2.5.0
