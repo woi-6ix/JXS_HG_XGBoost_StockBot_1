@@ -1,3 +1,5 @@
+--use-feature=2024-resolver
+--upgrade pip
 absl-py==2.1.0
 altair==5.5.0
 astunparse==1.6.3
