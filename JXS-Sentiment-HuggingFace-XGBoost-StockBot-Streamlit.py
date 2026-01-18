@@ -1,10 +1,11 @@
 #FinBERT Hugging Face Sentiment Analysis
-#Pretrained NLP (Natual Language Processing) analyzes sentiment, built by Prosus AI
-#Need the model than analyzes Financial Data, rather than general, thus using FinBERT 
+#Pretrained NLP (Natural Language Processing) analyzes sentiment, built by Prosus AI
+#Need a model that analyzes Financial Data, rather than general, thus using FinBERT 
 #Need to use Transformers to feed into Pipeline
-#Will be scraping news data from yahoo Finance RSS Feed
-#Feedpasers is only necessary if we want to use an RSS Feed (Really Simple Syndication is a web feed that allows users and applications to receive updates from websites in a standardized, computer-readable format)
+#Will be scraping news data from Yahoo Finance RSS Feed
+# Feedparsers are only necessary if we want to use an RSS Feed (Really Simple Syndication is a web feed that allows users and applications to receive updates from websites in a standardized, computer-readable format)
 #The stock data only includes trading days, but the news articles can be published on any day, including weekends and holidays. When we reindex the sentiment data to the stock's date range (which skips non-trading days), any news from non-trading days get their dates adjusted to the nearest trading day or dropped, leading to zeros.
+
 
 
 
