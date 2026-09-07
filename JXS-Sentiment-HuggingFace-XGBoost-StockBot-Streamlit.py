@@ -2,6 +2,11 @@
 # Updated to handle yfinance rate limits/empty downloads, yfinance MultiIndex columns,
 # Streamlit/PyTorch watcher issues, and safer conclusion rendering.
 
+
+# FinBERT Hugging Face Sentiment Analysis + XGBoost Streamlit StockBot
+# Updated to handle yfinance rate limits/empty downloads, yfinance MultiIndex columns,
+# Streamlit/PyTorch watcher issues, and safer conclusion rendering.
+
 import os
 
 # Helps prevent Streamlit Cloud from crashing while watching PyTorch internals.
